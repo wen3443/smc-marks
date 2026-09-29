@@ -1,0 +1,569 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © kxngHADES
+// GitHub: https://github.com/kxngHADES
+
+//@version=6
+indicator("SMC Marks", "SMC Marks", overlay = true, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500, max_bars_back = 1000)
+//---------------------------------------------------------------------------------------------------------------------}
+//CONSTANTS
+//---------------------------------------------------------------------------------------------------------------------{
+BULL        = 1
+BEAR        = -1
+
+MONO_COL    = #d1d4dc
+TEXT_COL    = #d1d4dc
+NEUTRAL_COL = #787b86
+
+//---------------------------------------------------------------------------------------------------------------------}
+//INPUTS
+//---------------------------------------------------------------------------------------------------------------------{
+G_STRUCT     = "Market Structure (Swing)"
+swingLen     = input.int(10, "Market Structure Period", minval = 2, group = G_STRUCT, tooltip = "Bars on each side required to confirm a swing high/low.\nScalping: 3-5 | Day Trading: 5-10 | Swing Trading: 10-20 | Trend Trading: 20-50")
+breakSrc     = input.string("Close", "Break Confirmation", options = ["Close", "Wick"], group = G_STRUCT, tooltip = "Close: a candle must close beyond the swing level.\nWick: any wick beyond the swing level counts as a break.")
+contTag      = input.string("BMS", "Continuation Label", options = ["BMS", "BOS"], group = G_STRUCT, tooltip = "Text used for a break in the direction of the trend (Break of Market Structure / Break of Structure).")
+showSwingLbl = input.bool(true, "Show HH / HL / LH / LL", group = G_STRUCT)
+showBreaks   = input.bool(true, "Show BMS / CHoCH", group = G_STRUCT)
+lblSizeIn    = input.string("Small", "Label Size", options = ["Tiny", "Small", "Normal"], group = G_STRUCT)
+bullCol      = input.color(#089981, "Bullish Trend", inline = "col", group = G_STRUCT)
+bearCol      = input.color(#F23645, "Bearish Trend", inline = "col", group = G_STRUCT)
+bmsCol       = input.color(#00e5ff, "BMS / BOS", inline = "brk", group = G_STRUCT)
+chochCol     = input.color(#00e676, "CHoCH", inline = "brk", group = G_STRUCT)
+hhCol        = input.color(#ffeb3b, "HH", inline = "sw1", group = G_STRUCT)
+hlCol        = input.color(#ff9800, "HL", inline = "sw1", group = G_STRUCT)
+lhCol        = input.color(#e040fb, "LH", inline = "sw2", group = G_STRUCT)
+llCol        = input.color(#ff5252, "LL", inline = "sw2", group = G_STRUCT)
+showTrendBg  = input.bool(false, "Confirmed Swing Trend Background", group = G_STRUCT)
+
+G_INT        = "Internal Structure (Minor)"
+showInternal = input.bool(false, "Show MBOS / iCHoCH", group = G_INT, tooltip = "Minor (internal) structure breaks drawn with dashed lines.")
+intLen       = input.int(5, "Internal Structure Period", minval = 2, group = G_INT)
+mbosCol      = input.color(#4dd0e1, "MBOS", inline = "int", group = G_INT)
+ichochCol    = input.color(#a5d6a7, "iCHoCH", inline = "int", group = G_INT)
+
+G_RANGE      = "Current Trading Range"
+showRange    = input.bool(true, "Show Trading Range", group = G_RANGE)
+showPD       = input.bool(true, "Show Premium / Discount / Equilibrium", group = G_RANGE)
+pdDepth      = input.float(20.0, "Zone Depth %", minval = 1, maxval = 45, group = G_RANGE, tooltip = "Height of the Premium and Discount zones as a % of the range.")
+pdOffset     = input.float(5.0, "Zone Offset From Range Edge %", minval = 0, maxval = 40, group = G_RANGE)
+eqWidth      = input.float(5.0, "Equilibrium Band Width %", minval = 0, maxval = 20, group = G_RANGE)
+rangeExt     = input.int(20, "Extend Right (bars)", minval = 1, maxval = 200, group = G_RANGE)
+rangeCol     = input.color(#787b861a, "Range", inline = "rc", group = G_RANGE)
+premCol      = input.color(#f2364533, "Premium", inline = "rc", group = G_RANGE)
+eqCol        = input.color(#787b8633, "Equilibrium", inline = "rc", group = G_RANGE)
+discCol      = input.color(#08998133, "Discount", inline = "rc", group = G_RANGE)
+
+G_OB         = "Order Blocks (Supply & Demand)"
+showOB       = input.bool(false, "Show Order Blocks", group = G_OB, tooltip = "Demand OB: the lowest candle before a bullish break.\nSupply OB: the highest candle before a bearish break.\nBlocks are removed once mitigated.")
+obCount      = input.int(3, "Max Blocks Per Side", minval = 1, maxval = 20, group = G_OB)
+obMitig      = input.string("Close", "Mitigation", options = ["Close", "Wick"], group = G_OB)
+demandCol    = input.color(#08998140, "Demand", inline = "ob", group = G_OB)
+supplyCol    = input.color(#f2364540, "Supply", inline = "ob", group = G_OB)
+
+G_FVG        = "Imbalance (FVG / IMB)"
+showFVG      = input.bool(false, "Show Fair Value Gaps", group = G_FVG, tooltip = "Three-candle imbalances. Partially filled gaps shrink; fully filled gaps (Gap Fill) are removed.")
+fvgMinAtr    = input.float(0.0, "Min Gap Size (x ATR)", minval = 0, step = 0.05, group = G_FVG)
+fvgCount     = input.int(5, "Max Gaps Per Side", minval = 1, maxval = 50, group = G_FVG)
+fvgBullCol   = input.color(#08998126, "Bullish", inline = "fvg", group = G_FVG)
+fvgBearCol   = input.color(#f2364526, "Bearish", inline = "fvg", group = G_FVG)
+
+G_LIQ        = "Liquidity (EQH / EQL)"
+showEQ       = input.bool(false, "Show Equal Highs / Lows", group = G_LIQ, tooltip = "EQH mark Buy Side Liquidity (BSL) resting above, EQL mark Sell Side Liquidity (SSL) resting below.")
+eqLen        = input.int(3, "Confirmation Bars", minval = 1, group = G_LIQ)
+eqThr        = input.float(0.1, "Threshold (x ATR)", minval = 0, maxval = 0.5, step = 0.05, group = G_LIQ)
+eqhCol       = input.color(#f48fb1, "EQH (BSL)", inline = "eq", group = G_LIQ)
+eqlCol       = input.color(#ce93d8, "EQL (SSL)", inline = "eq", group = G_LIQ)
+
+G_LVL        = "Session Levels"
+showDay      = input.bool(false, "Show HOD / LOD", group = G_LVL, tooltip = "Running High / Low of the Day (intraday charts only).")
+showWeek     = input.bool(false, "Show HOW / LOW", group = G_LVL, tooltip = "Running Highs / Lows of the Week (charts below weekly).")
+dayCol       = input.color(#90caf9, "HOD / LOD", inline = "lvl", group = G_LVL)
+weekCol      = input.color(#ffcc80, "HOW / LOW", inline = "lvl", group = G_LVL)
+
+G_FRAC       = "Fractals"
+showFractals = input.bool(false, "Show Fractals", group = G_FRAC, tooltip = "Classic 5-bar fractal highs and lows.")
+
+G_DASH       = "Dashboard"
+showTable    = input.bool(true, "Show Trend / Range Table", group = G_DASH)
+dashPosIn    = input.string("Top Right", "Position", options = ["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group = G_DASH)
+showGlossary = input.bool(false, "Show SMC Glossary", group = G_DASH)
+glossPosIn   = input.string("Bottom Left", "Glossary Position", options = ["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group = G_DASH)
+
+//---------------------------------------------------------------------------------------------------------------------}
+//TYPES
+//---------------------------------------------------------------------------------------------------------------------{
+type Pivot
+    float price   = na
+    int   bar     = na
+    bool  crossed = false
+
+type Structure
+    Pivot hi
+    Pivot lo
+    int   trend = 0
+
+//---------------------------------------------------------------------------------------------------------------------}
+//HELPERS
+//---------------------------------------------------------------------------------------------------------------------{
+f_size(string s) =>
+    switch s
+        "Tiny"   => size.tiny
+        "Normal" => size.normal
+        => size.small
+
+f_pos(string s) =>
+    switch s
+        "Top Left"     => position.top_left
+        "Bottom Right" => position.bottom_right
+        "Bottom Left"  => position.bottom_left
+        => position.top_right
+
+LBL_SIZE = f_size(lblSizeIn)
+
+// One color per mark type
+f_markColor(string tag) =>
+    switch tag
+        "HH"     => hhCol
+        "HL"     => hlCol
+        "LH"     => lhCol
+        "LL"     => llCol
+        "CHoCH"  => chochCol
+        "MBOS"   => mbosCol
+        "iCHoCH" => ichochCol
+        => bmsCol
+
+// Hover text for every mark drawn on the chart
+f_tip(string tag) =>
+    switch tag
+        "HH"     => "HH - Higher High: swing high above the previous swing high (bullish structure)"
+        "HL"     => "HL - Higher Low: swing low above the previous swing low (bullish structure)"
+        "LH"     => "LH - Lower High: swing high below the previous swing high (bearish structure)"
+        "LL"     => "LL - Lower Low: swing low below the previous swing low (bearish structure)"
+        "BMS"    => "BMS - Break of Market Structure: price broke a swing level in the direction of the trend (continuation)"
+        "BOS"    => "BOS - Break of Structure: price broke a swing level in the direction of the trend (continuation)"
+        "CHoCH"  => "CHoCH - Change of Character: price broke a swing level against the trend (possible reversal)"
+        "MBOS"   => "MBOS - Minor Break of Structure: internal structure continuation"
+        "iCHoCH" => "iCHoCH - Internal Change of Character: minor structure shifted against the internal trend"
+        "EQH"    => "EQH - Equal Highs: Buy Side Liquidity (BSL) rests above"
+        "EQL"    => "EQL - Equal Lows: Sell Side Liquidity (SSL) rests below"
+        => tag
+
+//---------------------------------------------------------------------------------------------------------------------}
+//SWING DETECTION
+//---------------------------------------------------------------------------------------------------------------------{
+var Structure swing    = Structure.new(Pivot.new(), Pivot.new())
+var Structure internal = Structure.new(Pivot.new(), Pivot.new())
+
+float atrv  = ta.atr(200)
+float upSrc = breakSrc == "Close" ? close : high
+float dnSrc = breakSrc == "Close" ? close : low
+
+float swPH = ta.pivothigh(high, swingLen, swingLen)
+float swPL = ta.pivotlow(low, swingLen, swingLen)
+float inPH = ta.pivothigh(high, intLen, intLen)
+float inPL = ta.pivotlow(low, intLen, intLen)
+
+bool newHH = false
+bool newLL = false
+
+// Swing highs -> HH / LH
+if not na(swPH)
+    Pivot h = swing.hi
+    if not na(h.price)
+        string tag = swPH > h.price ? "HH" : "LH"
+        newHH := tag == "HH"
+        if showSwingLbl
+            label.new(bar_index - swingLen, swPH, tag, color = color(na), style = label.style_label_down, textcolor = f_markColor(tag), size = LBL_SIZE, tooltip = f_tip(tag))
+    h.price   := swPH
+    h.bar     := bar_index - swingLen
+    h.crossed := false
+
+// Swing lows -> HL / LL
+if not na(swPL)
+    Pivot l = swing.lo
+    if not na(l.price)
+        string tag = swPL < l.price ? "LL" : "HL"
+        newLL := tag == "LL"
+        if showSwingLbl
+            label.new(bar_index - swingLen, swPL, tag, color = color(na), style = label.style_label_up, textcolor = f_markColor(tag), size = LBL_SIZE, tooltip = f_tip(tag))
+    l.price   := swPL
+    l.bar     := bar_index - swingLen
+    l.crossed := false
+
+// Internal pivots (no labels)
+if not na(inPH)
+    Pivot h = internal.hi
+    h.price   := inPH
+    h.bar     := bar_index - intLen
+    h.crossed := false
+
+if not na(inPL)
+    Pivot l = internal.lo
+    l.price   := inPL
+    l.bar     := bar_index - intLen
+    l.crossed := false
+
+//---------------------------------------------------------------------------------------------------------------------}
+//STRUCTURE BREAKS (BMS / BOS / CHoCH / MBOS)
+//---------------------------------------------------------------------------------------------------------------------{
+// Returns +2 bullish CHoCH, +1 bullish continuation, -1 bearish continuation, -2 bearish CHoCH, 0 none
+f_structureBreak(Structure s, bool isInternal, float skipHi, float skipLo) =>
+    int  result = 0
+    bool show   = isInternal ? showInternal : showBreaks
+    Pivot h = s.hi
+    Pivot l = s.lo
+
+    if not na(h.price) and not h.crossed and upSrc > h.price and (na(skipHi) or h.price != skipHi)
+        bool isChoch = s.trend == BEAR
+        h.crossed := true
+        s.trend   := BULL
+        result    := isChoch ? 2 : 1
+        if show
+            string txt = isInternal ? (isChoch ? "iCHoCH" : "MBOS") : (isChoch ? "CHoCH" : contTag)
+            color  c   = f_markColor(txt)
+            line.new(h.bar, h.price, bar_index, h.price, color = c, style = isInternal ? line.style_dashed : line.style_solid)
+            label.new(int(math.avg(h.bar, bar_index)), h.price, txt, color = color(na), style = label.style_label_down, textcolor = c, size = isInternal ? size.tiny : LBL_SIZE, tooltip = f_tip(txt))
+
+    if not na(l.price) and not l.crossed and dnSrc < l.price and (na(skipLo) or l.price != skipLo)
+        bool isChoch = s.trend == BULL
+        l.crossed := true
+        s.trend   := BEAR
+        result    := isChoch ? -2 : -1
+        if show
+            string txt = isInternal ? (isChoch ? "iCHoCH" : "MBOS") : (isChoch ? "CHoCH" : contTag)
+            color  c   = f_markColor(txt)
+            line.new(l.bar, l.price, bar_index, l.price, color = c, style = isInternal ? line.style_dashed : line.style_solid)
+            label.new(int(math.avg(l.bar, bar_index)), l.price, txt, color = color(na), style = label.style_label_up, textcolor = c, size = isInternal ? size.tiny : LBL_SIZE, tooltip = f_tip(txt))
+    result
+
+int swingBreak = f_structureBreak(swing, false, na, na)
+// Internal breaks that sit on the same level as a swing break are skipped to avoid duplicate marks
+int intBreak   = f_structureBreak(internal, true, swing.hi.price, swing.lo.price)
+
+//---------------------------------------------------------------------------------------------------------------------}
+//ORDER BLOCKS (SUPPLY & DEMAND)
+//---------------------------------------------------------------------------------------------------------------------{
+var array<box> demandOBs = array.new<box>()
+var array<box> supplyOBs = array.new<box>()
+
+f_pushZone(array<box> zones, box b, int maxCount) =>
+    zones.unshift(b)
+    if zones.size() > maxCount
+        zones.pop().delete()
+    0
+
+f_updateOB(array<box> zones, bool isDemand) =>
+    if zones.size() > 0
+        for i = zones.size() - 1 to 0
+            box b = zones.get(i)
+            float src = obMitig == "Close" ? close : isDemand ? low : high
+            bool broken = isDemand ? src < b.get_bottom() : src > b.get_top()
+            if broken
+                zones.remove(i)
+                b.delete()
+            else
+                b.set_right(bar_index + rangeExt)
+    0
+
+if showOB
+    // Mitigate existing blocks before adding the new one
+    f_updateOB(demandOBs, true)
+    f_updateOB(supplyOBs, false)
+
+    if swingBreak > 0
+        int   dist = math.min(bar_index - swing.hi.bar, 999)
+        int   idx  = 1
+        float mn   = low[1]
+        for i = 1 to dist
+            if low[i] < mn
+                mn  := low[i]
+                idx := i
+        box b = box.new(bar_index - idx, high[idx], bar_index + rangeExt, low[idx], border_color = color(na), bgcolor = demandCol, text = "Demand OB", text_size = size.tiny, text_color = TEXT_COL, text_halign = text.align_right)
+        f_pushZone(demandOBs, b, obCount)
+
+    if swingBreak < 0
+        int   dist = math.min(bar_index - swing.lo.bar, 999)
+        int   idx  = 1
+        float mx   = high[1]
+        for i = 1 to dist
+            if high[i] > mx
+                mx  := high[i]
+                idx := i
+        box b = box.new(bar_index - idx, high[idx], bar_index + rangeExt, low[idx], border_color = color(na), bgcolor = supplyCol, text = "Supply OB", text_size = size.tiny, text_color = TEXT_COL, text_halign = text.align_right)
+        f_pushZone(supplyOBs, b, obCount)
+
+//---------------------------------------------------------------------------------------------------------------------}
+//IMBALANCE / FAIR VALUE GAPS
+//---------------------------------------------------------------------------------------------------------------------{
+var array<box> bullFVGs = array.new<box>()
+var array<box> bearFVGs = array.new<box>()
+
+f_updateFVG(array<box> zones, bool isBull) =>
+    if zones.size() > 0
+        for i = zones.size() - 1 to 0
+            box b = zones.get(i)
+            if isBull
+                if low <= b.get_bottom()
+                    zones.remove(i)
+                    b.delete()
+                else
+                    if low < b.get_top()
+                        b.set_top(low)
+                    b.set_right(bar_index + rangeExt)
+            else
+                if high >= b.get_top()
+                    zones.remove(i)
+                    b.delete()
+                else
+                    if high > b.get_bottom()
+                        b.set_bottom(high)
+                    b.set_right(bar_index + rangeExt)
+    0
+
+float minGap  = fvgMinAtr * nz(atrv)
+bool  bullGap = low > high[2] and close[1] > high[2] and (low - high[2]) >= minGap
+bool  bearGap = high < low[2] and close[1] < low[2] and (low[2] - high) >= minGap
+
+if showFVG
+    f_updateFVG(bullFVGs, true)
+    f_updateFVG(bearFVGs, false)
+    if bullGap
+        f_pushZone(bullFVGs, box.new(bar_index - 2, low, bar_index + rangeExt, high[2], border_color = color(na), bgcolor = fvgBullCol, text = "FVG", text_size = size.tiny, text_color = TEXT_COL, text_halign = text.align_right), fvgCount)
+    if bearGap
+        f_pushZone(bearFVGs, box.new(bar_index - 2, low[2], bar_index + rangeExt, high, border_color = color(na), bgcolor = fvgBearCol, text = "FVG", text_size = size.tiny, text_color = TEXT_COL, text_halign = text.align_right), fvgCount)
+
+//---------------------------------------------------------------------------------------------------------------------}
+//LIQUIDITY - EQUAL HIGHS / LOWS
+//---------------------------------------------------------------------------------------------------------------------{
+float eqPH = ta.pivothigh(high, eqLen, eqLen)
+float eqPL = ta.pivotlow(low, eqLen, eqLen)
+
+var float lastEqH    = na
+var int   lastEqHBar = na
+var float lastEqL    = na
+var int   lastEqLBar = na
+
+bool eqhFound = false
+bool eqlFound = false
+
+if not na(eqPH)
+    if not na(lastEqH) and not na(atrv) and math.abs(eqPH - lastEqH) < eqThr * atrv
+        eqhFound := true
+        if showEQ
+            int x2 = bar_index - eqLen
+            line.new(lastEqHBar, lastEqH, x2, eqPH, color = eqhCol, style = line.style_dotted)
+            label.new(int(math.avg(lastEqHBar, x2)), eqPH, "EQH", color = color(na), style = label.style_label_down, textcolor = eqhCol, size = size.tiny, tooltip = f_tip("EQH"))
+    lastEqH    := eqPH
+    lastEqHBar := bar_index - eqLen
+
+if not na(eqPL)
+    if not na(lastEqL) and not na(atrv) and math.abs(eqPL - lastEqL) < eqThr * atrv
+        eqlFound := true
+        if showEQ
+            int x2 = bar_index - eqLen
+            line.new(lastEqLBar, lastEqL, x2, eqPL, color = eqlCol, style = line.style_dotted)
+            label.new(int(math.avg(lastEqLBar, x2)), eqPL, "EQL", color = color(na), style = label.style_label_up, textcolor = eqlCol, size = size.tiny, tooltip = f_tip("EQL"))
+    lastEqL    := eqPL
+    lastEqLBar := bar_index - eqLen
+
+//---------------------------------------------------------------------------------------------------------------------}
+//CURRENT TRADING RANGE
+//---------------------------------------------------------------------------------------------------------------------{
+// The range expands in real time: when price trades beyond one edge, that edge follows price and the
+// opposite edge moves to the most recent confirmed swing on that side (e.g. HL -> HH in an uptrend).
+var float rTop    = na
+var int   rTopBar = na
+var float rBot    = na
+var int   rBotBar = na
+
+if na(rTop) and not na(swing.hi.price) and not na(swing.lo.price)
+    rTop    := math.max(swing.hi.price, swing.lo.price)
+    rTopBar := swing.hi.bar
+    rBot    := math.min(swing.hi.price, swing.lo.price)
+    rBotBar := swing.lo.bar
+
+if not na(rTop)
+    if high > rTop
+        rTop    := high
+        rTopBar := bar_index
+        if not na(swing.lo.bar) and swing.lo.bar > rBotBar
+            rBot    := swing.lo.price
+            rBotBar := swing.lo.bar
+    if low < rBot
+        rBot    := low
+        rBotBar := bar_index
+        if not na(swing.hi.bar) and swing.hi.bar > rTopBar
+            rTop    := swing.hi.price
+            rTopBar := swing.hi.bar
+
+float rSpan    = rTop - rBot
+float rMid     = rBot + rSpan / 2
+float premLow  = rTop - rSpan * (pdOffset + pdDepth) / 100
+float discHigh = rBot + rSpan * (pdOffset + pdDepth) / 100
+
+//---------------------------------------------------------------------------------------------------------------------}
+//SESSION LEVELS (HOD / LOD / HOW / LOW)
+//---------------------------------------------------------------------------------------------------------------------{
+var float dH  = na
+var int   dHb = na
+var float dL  = na
+var int   dLb = na
+var float wH  = na
+var int   wHb = na
+var float wL  = na
+var int   wLb = na
+
+if timeframe.change("D") or na(dH)
+    dH  := high
+    dHb := bar_index
+    dL  := low
+    dLb := bar_index
+else
+    if high > dH
+        dH  := high
+        dHb := bar_index
+    if low < dL
+        dL  := low
+        dLb := bar_index
+
+if timeframe.change("W") or na(wH)
+    wH  := high
+    wHb := bar_index
+    wL  := low
+    wLb := bar_index
+else
+    if high > wH
+        wH  := high
+        wHb := bar_index
+    if low < wL
+        wL  := low
+        wLb := bar_index
+
+bool dayOk  = timeframe.isintraday
+bool weekOk = timeframe.in_seconds() < timeframe.in_seconds("W")
+
+//---------------------------------------------------------------------------------------------------------------------}
+//LIVE DRAWINGS (redrawn on the last bar)
+//---------------------------------------------------------------------------------------------------------------------{
+var array<line>  dynLines  = array.new<line>()
+var array<box>   dynBoxes  = array.new<box>()
+var array<label> dynLabels = array.new<label>()
+
+f_clearDyn() =>
+    for ln in dynLines
+        ln.delete()
+    for bx in dynBoxes
+        bx.delete()
+    for lb in dynLabels
+        lb.delete()
+    dynLines.clear()
+    dynBoxes.clear()
+    dynLabels.clear()
+    0
+
+f_hLine(int x1, float y, int x2, color col, string sty) =>
+    dynLines.push(line.new(x1, y, x2, y, color = col, style = sty))
+
+f_zone(int left, float top, int right, float bottom, color col) =>
+    dynBoxes.push(box.new(left, top, right, bottom, border_color = color(na), bgcolor = col))
+
+f_tag(int x, float y, string txt, color col, string tip) =>
+    dynLabels.push(label.new(x, y, txt, color = color(na), style = label.style_label_left, textcolor = col, size = LBL_SIZE, tooltip = tip))
+
+if barstate.islast
+    f_clearDyn()
+    int right = bar_index + rangeExt
+
+    if not na(rTop) and not na(rBot)
+        int left = math.max(rTopBar, rBotBar)
+        if showRange
+            f_zone(left, rTop, right, rBot, rangeCol)
+            f_hLine(rTopBar, rTop, right, MONO_COL, line.style_dotted)
+            f_hLine(rBotBar, rBot, right, MONO_COL, line.style_dotted)
+            f_tag(right, rTop, "Upper Range", MONO_COL, "Upper Range - top of the current trading (dealing) range")
+            f_tag(right, rBot, "Lower Range", MONO_COL, "Lower Range - bottom of the current trading (dealing) range")
+        if showPD
+            float pTop = rTop - rSpan * pdOffset / 100
+            float dBot = rBot + rSpan * pdOffset / 100
+            float eHalf = rSpan * eqWidth / 200
+            f_zone(left, pTop, right, premLow, premCol)
+            f_zone(left, discHigh, right, dBot, discCol)
+            f_zone(left, rMid + eHalf, right, rMid - eHalf, eqCol)
+            f_hLine(left, rMid, right, NEUTRAL_COL, line.style_dashed)
+            f_tag(right, math.avg(pTop, premLow), "Premium", bearCol, "Premium - upper part of the range: look for sells / supply")
+            f_tag(right, rMid, "Equilibrium", NEUTRAL_COL, "ES / Equilibrium - 50% of the current range")
+            f_tag(right, math.avg(discHigh, dBot), "Discount", bullCol, "Discount - lower part of the range: look for buys / demand")
+
+    if showDay and dayOk and not na(dH)
+        f_hLine(dHb, dH, right, dayCol, line.style_dashed)
+        f_hLine(dLb, dL, right, dayCol, line.style_dashed)
+        f_tag(right, dH, "HOD", dayCol, "HOD - High of the Day")
+        f_tag(right, dL, "LOD", dayCol, "LOD - Low of the Day")
+
+    if showWeek and weekOk and not na(wH)
+        f_hLine(wHb, wH, right, weekCol, line.style_dotted)
+        f_hLine(wLb, wL, right, weekCol, line.style_dotted)
+        f_tag(right, wH, "HOW", weekCol, "HOW - High of the Week")
+        f_tag(right, wL, "LOW", weekCol, "LOW - Low of the Week")
+
+//---------------------------------------------------------------------------------------------------------------------}
+//DASHBOARD
+//---------------------------------------------------------------------------------------------------------------------{
+var table dash = table.new(f_pos(dashPosIn), 2, 4, bgcolor = #131722, border_color = #363a45, border_width = 1, frame_color = #363a45, frame_width = 1)
+
+if barstate.islast and showTable
+    color  tCol  = swing.trend == BULL ? bullCol : swing.trend == BEAR ? bearCol : NEUTRAL_COL
+    string tTxt  = swing.trend == BULL ? "Positive" : swing.trend == BEAR ? "Negative" : "Neutral"
+    table.cell(dash, 0, 0, "Trend", text_color = color.white, bgcolor = tCol, text_size = size.small)
+    table.cell(dash, 1, 0, tTxt, text_color = color.white, bgcolor = tCol, text_size = size.small)
+    table.cell(dash, 0, 1, "Upper Range:", text_color = TEXT_COL, text_size = size.small, text_halign = text.align_right)
+    table.cell(dash, 1, 1, str.tostring(rTop, format.mintick), text_color = TEXT_COL, text_size = size.small)
+    table.cell(dash, 0, 2, "Lower Range:", text_color = TEXT_COL, text_size = size.small, text_halign = text.align_right)
+    table.cell(dash, 1, 2, str.tostring(rBot, format.mintick), text_color = TEXT_COL, text_size = size.small)
+    table.cell(dash, 0, 3, "Mid:", text_color = TEXT_COL, text_size = size.small, text_halign = text.align_right)
+    table.cell(dash, 1, 3, str.tostring(rMid, format.mintick), text_color = TEXT_COL, text_size = size.small)
+
+//---------------------------------------------------------------------------------------------------------------------}
+//GLOSSARY
+//---------------------------------------------------------------------------------------------------------------------{
+var bool glossBuilt = false
+if barstate.islast and showGlossary and not glossBuilt
+    glossBuilt := true
+    var table gloss = table.new(f_pos(glossPosIn), 4, 23, bgcolor = #131722e6, border_color = #363a45, border_width = 1, frame_color = #363a45, frame_width = 1)
+    var array<string> abbr = array.from("SBD", "S2D", "D2S", "OB", "AOI", "POI", "LoR", "FLOR", "IMB", "Ineff.", "IRL", "FML", "FVG", "HH", "HL", "LH", "LL", "BOS", "BMS", "RBOS", "MBOS", "CHoCH", "SMC", "EQH", "EQL", "BSL", "SSL", "LQ", "ES", "PA", "HTF", "LTF", "FT", "CF", "OF", "EXO", "HOD", "LOD", "HOW", "LOW", "RE", "RR", "GF", "HFs")
+    var array<string> desc = array.from("Supply & Demand", "Supply to Demand", "Demand to Supply", "Orderblock", "Area of Interest", "Point of Interest", "Level of Respect", "First Level of Respect", "Imbalance", "Inefficiency", "Internal Range Liquidity", "Fair Value Gap Liquidity", "Fair Value Gap", "Higher High", "Higher Low", "Lower High", "Lower Low", "Break of Structure", "Break of Market Structure", "Retail Break of Market Structure", "Minor Break of Structure", "Change of Character", "Smart Money Concepts", "Equal Highs", "Equal Lows", "Buy Side Liquidity", "Sell Side Liquidity", "Liquidity", "Equilibrium", "Price Action", "Higher Timeframe", "Lower Timeframe", "Fibonacci", "Confirmed Trend", "Orderflow", "External Orderflow", "High of the Day", "Low of the Day", "Highs of the Week", "Lows of the Week", "Risk Entry", "Risk Reward", "Gap Fill", "Hedge Funds")
+    table.cell(gloss, 0, 0, "SMC Glossary", text_color = color.white, bgcolor = #2a2e39, text_size = size.small)
+    table.merge_cells(gloss, 0, 0, 3, 0)
+    int half = int(math.ceil(abbr.size() / 2.0))
+    for i = 0 to abbr.size() - 1
+        int col = i < half ? 0 : 2
+        int row = 1 + (i < half ? i : i - half)
+        table.cell(gloss, col, row, abbr.get(i), text_color = color.white, text_size = size.tiny, text_halign = text.align_left)
+        table.cell(gloss, col + 1, row, desc.get(i), text_color = TEXT_COL, text_size = size.tiny, text_halign = text.align_left)
+
+//---------------------------------------------------------------------------------------------------------------------}
+//PLOTS
+//---------------------------------------------------------------------------------------------------------------------{
+float frH = ta.pivothigh(high, 2, 2)
+float frL = ta.pivotlow(low, 2, 2)
+plotshape(showFractals and not na(frH), "Fractal High", shape.triangledown, location.abovebar, bearCol, offset = -2, size = size.tiny)
+plotshape(showFractals and not na(frL), "Fractal Low", shape.triangleup, location.belowbar, bullCol, offset = -2, size = size.tiny)
+
+color trendBg = swing.trend == BULL ? color.new(bullCol, 92) : swing.trend == BEAR ? color.new(bearCol, 92) : na
+bgcolor(showTrendBg ? trendBg : na, title = "Swing Trend Background")
+
+//---------------------------------------------------------------------------------------------------------------------}
+//ALERTS
+//---------------------------------------------------------------------------------------------------------------------{
+alertcondition(swingBreak == 2, "Bullish CHoCH", "SMC: Bullish Change of Character on {{ticker}} ({{interval}})")
+alertcondition(swingBreak == -2, "Bearish CHoCH", "SMC: Bearish Change of Character on {{ticker}} ({{interval}})")
+alertcondition(swingBreak == 1, "Bullish BMS", "SMC: Bullish Break of Market Structure on {{ticker}} ({{interval}})")
+alertcondition(swingBreak == -1, "Bearish BMS", "SMC: Bearish Break of Market Structure on {{ticker}} ({{interval}})")
+alertcondition(intBreak == 2 or intBreak == 1, "Bullish Internal Break", "SMC: Bullish MBOS / iCHoCH on {{ticker}} ({{interval}})")
+alertcondition(intBreak == -2 or intBreak == -1, "Bearish Internal Break", "SMC: Bearish MBOS / iCHoCH on {{ticker}} ({{interval}})")
+alertcondition(newHH, "New Higher High", "SMC: New HH confirmed on {{ticker}} ({{interval}})")
+alertcondition(newLL, "New Lower Low", "SMC: New LL confirmed on {{ticker}} ({{interval}})")
+alertcondition(eqhFound, "Equal Highs", "SMC: Equal Highs (BSL) detected on {{ticker}} ({{interval}})")
+alertcondition(eqlFound, "Equal Lows", "SMC: Equal Lows (SSL) detected on {{ticker}} ({{interval}})")
+alertcondition(ta.crossover(close, premLow), "Price Entered Premium", "SMC: Price entered Premium on {{ticker}} ({{interval}})")
+alertcondition(ta.crossunder(close, discHigh), "Price Entered Discount", "SMC: Price entered Discount on {{ticker}} ({{interval}})")
+//---------------------------------------------------------------------------------------------------------------------}

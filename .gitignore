@@ -1,0 +1,20 @@
+# OS files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Temporary / backup files
+*.tmp
+*.bak
+*.log
